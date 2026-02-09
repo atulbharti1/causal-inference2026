@@ -1,0 +1,186 @@
+---
+title: "Causal Inference Lab One"
+fig_caption: yes
+output: pdf_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+## Setup
+- Download the file `full_potential_outcomes.tsv`
+- Move the file to a "lab 1" folder on your own computer
+- Install the `tidyverse` and `here` R packages if you don't already have them
+
+```{r message=F, warning=F}k
+knitr::opts_chunk$set(fig.width=4, fig.height=3)
+# install.packages(c('tidyverse', 'here'))
+library(tidyverse)
+library(here)
+df <- readr::read_tsv("full_potential_outcomes.tsv")
+```
+
+The data contains the following columns:
+
+- **Potential Outcomes**: `y0` and `y1`
+- **Observed Outcome**: `y`
+- **Treatment**: `t`.
+
+```{r}
+df %>% head()
+```
+
+## Lab Demonstration:
+
+- How does the observed outcome `y` relate to the treatment `t` and the potential outcomes `y0` and `y1`? 
+
+```{r}
+df %>% select(y0, y1, t, y) %>% tail
+```
+
+- Calculate the difference in means between the treated and the untreated. 
+```{r}
+mean(filter(df, t == 1)$y) - mean(filter(df, t == 0)$y)
+```
+
+- Calculate the true global average treatment effect 
+```{r}
+mean(df$y1 - df$y0)
+```
+
+- Explain why they are different. Show this using R.
+```{r}
+# Treatment assignment is correlated with potential outcomes at baseline
+# This means treated and control units are not comparable
+cor(df$t, df$y0)
+cor(df$t, df$y1)
+
+# We can visualize this: treated units have higher baseline potential outcomes
+df %>% ggplot(aes(x = factor(t), y = y0)) +
+  geom_boxplot() +
+  labs(x = "Treatment", y = "Baseline Potential Outcome (Y0)")
+```
+
+- What is the ATE vs the ATC and ATT? How would we calculate these from the science?
+
+```{r}
+# ATE (Average treatment effect - for everyone)
+mean(df$y1 - df$y0)
+## Same thing with fancy code
+with(df, mean(y1) - mean(y0))
+
+# ATC (Average treatment on control)
+mean(filter(df, t==0)$y1 - filter(df, t==0)$y0)
+with(filter(df, t==0), mean(y1) - mean(y0))
+
+# ATT (Average treatment on treated)
+mean(filter(df, t==1)$y1 - filter(df, t==1)$y0)
+with(filter(df, t==1), mean(y1) - mean(y0))
+```
+
+# In-Lab Assignment
+
+Do the next part in pairs. Prepare your work using RMarkdown. 
+
+## Fixing the ATE estimation
+
+- You get to play omnipotent being! Create an alternate universe (ie, a new treatment assignment and new outcome variable) such that the difference in means between the treated and the untreated can be reliably estimated.
+- Estimate the difference in means and compare it to the true effect.
+- Are they different? Why/How? 
+
+```{r}
+# Sample treatment assignment independently of potential outcomes
+set.seed(123)
+df$t_random <- sample(c(0, 1), nrow(df), replace = TRUE)
+
+# Create observed outcome under this new treatment assignment
+df$y_random <- ifelse(df$t_random == 1, df$y1, df$y0)
+
+# Verify treatment is now independent of baseline potential outcomes
+cor(df$t_random, df$y0)
+cor(df$t_random, df$y1)
+
+# Difference in means under random assignment
+diff_in_means <- mean(df$y_random[df$t_random == 1]) - mean(df$y_random[df$t_random == 0])
+diff_in_means
+
+# Compare to true ATE
+true_ate <- mean(df$y1 - df$y0)
+true_ate
+
+# They should be close because treatment is now independent of potential outcomes
+```
+
+## Conditional Independence
+
+- Create an alternate universe where the difference in means between treatment and control can only be reliably estimated after conditioning on another variable.
+- Create a confounder variable `x` that is related to both treatment assignment and potential outcomes.
+- Show that the naive difference in means is biased.
+- Show that after conditioning on `x`, the difference in means within each stratum provides an unbiased estimate of the ATE.
+
+
+```{r}
+set.seed(123)
+
+df$x <- df$y0 + rnorm(nrow(df), 0, 0.5) # confounder related to baseline potential outcomes by adding noise
+df$t_confound <- ifelse(df$x > median(df$x), 1, 0)
+
+## Posibility to use a probabilistic treatment assignment instead of deterministic and scale x to make it more realistic
+# df$x <- scale(df$y0 + rnorm(nrow(df), sd = 0.5))[,1]  
+# p <- plogis(1.2 * df$x) # treatment depends on x (probabilistic is nicer than deterministic)
+# df$t_confound <- rbinom(nrow(df), 1, p)
+
+df$y_confound <- ifelse(df$t_confound==1, df$y1, df$y0)
+
+# Treatment is now dependent of baseline potential outcomes
+cor(df$t_confound, df$y0)
+cor(df$t_confound, df$y1)
+
+naive_diff <- with(df, mean(y_confound[t_confound==1]) - mean(y_confound[t_confound==0]))
+true_ate   <- mean(df$y1 - df$y0)
+
+naive_diff
+true_ate
+
+# They should be different because treatment is now confounded with x
+# Now condition on x by stratifying
+# Create strata of x (quintiles)
+df$stratum <- cut(
+  df$x,
+  breaks = quantile(df$x, probs = seq(0, 1, 0.2)),
+  include.lowest = TRUE
+)
+
+# Within-stratum difference in means (only where both groups exist)
+stratum_effects <- df %>%
+  dplyr::group_by(stratum) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    n_treat = sum(t_confound == 1),
+    n_ctrl  = sum(t_confound == 0),
+    diff = ifelse(
+      n_treat > 0 & n_ctrl > 0,
+      mean(y_confound[t_confound == 1]) - mean(y_confound[t_confound == 0]),
+      NA_real_
+    ),
+    .groups = "drop"
+  )
+
+stratum_effects
+
+# Weighted average of stratum diffs (dropping NA strata)
+adj <- with(stratum_effects, weighted.mean(diff, w = n, na.rm = TRUE))
+adj
+
+# Using regression to adjust for x with complete data
+coef(lm(y_confound ~ t_confound + x, data=df))["t_confound"]
+
+```
+
+## Lalonde Dataset
+- Load the `lalonde` dataset from the `MatchIt` package.
+- Estimate the difference in means between the treated and the untreated for the outcome variable `re78`.
+- Discuss why this estimate might be biased. What are some potential confounders in this dataset?
+  
+```{r}
+load("")
+```
