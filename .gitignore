@@ -1,4 +1,36 @@
+<<<<<<< HEAD
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
+=======
+# LaTeX auxiliary files
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.nav
+*.out
+*.snm
+*.synctex.gz
+*.toc
+
+# Optional extra LaTeX temp files
+*.bbl
+*.blg
+*.lof
+*.lot
+*.fmt
+*.fot
+*.cb
+*.cb2
+*.xdv
+*.bcf
+*.run.xml
+
+# Ignore .vscode settings
+.vscode/
+
+# Local R package library used for ad hoc installs
+r_libs/
+>>>>>>> 6b0e5731578a3db7486728f5419cad74651250ce
